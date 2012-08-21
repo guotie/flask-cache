@@ -79,3 +79,52 @@ class CacheExtension(Extension):
                 cache.set(key, rv, timeout)
 
         return rv
+
+
+class DynCacheExtension(Extension):
+    tags = set(['dyncache'])
+
+    def parse(self, parser):
+        lineno = parser.stream.next().lineno
+        #cache key name is "template file path" + "line no"
+        default_cache_key_name = u"%s%s" % (parser.filename, lineno)
+        default_cache_key_name.encode('utf-8')
+
+        cache_key_names = [nodes.Const(default_cache_key_name)]
+        #parse timeout
+        if parser.stream.current.type != 'block_end':
+            timeout = parser.parse_expression()
+            while parser.stream.skip_if('comma'):
+                keyname = parser.parse_expression()
+                if isinstance(keyname, nodes.Name):
+                    keyname = nodes.Name(keyname.name, 'load')
+                cache_key_names.append(keyname)
+        else:
+            timeout = nodes.Const(None)
+
+        args = [nodes.List(cache_key_names), timeout]
+
+        body = parser.parse_statements(['name:endcache'], drop_needle=True)
+
+        return nodes.CallBlock(self.call_method('_cache', args),
+            [], [], body).set_lineno(lineno)
+
+    def _cache(self, keys_list, timeout, caller):
+        try:
+            cache = getattr(self.environment, JINJA_CACHE_ATTR_NAME)
+        except AttributeError, e:
+            raise e
+
+        if timeout == "del":
+            cache.delete_many(*keys_list)
+            return caller()
+
+        key = '_'.join(keys_list)
+        rv = cache.get(key)
+
+        if rv is None:
+            rv = caller()
+
+            cache.set(key, rv, timeout)
+
+        return rv
